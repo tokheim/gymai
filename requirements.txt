@@ -4,3 +4,4 @@ tensorboardx
 gym
 box2d-py
 gym[atari]
+matplotlib

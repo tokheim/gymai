@@ -8,10 +8,13 @@ class ModelHolder(object):
     _ACTION_OUT = "action_out"
     _VALUE_OUT = "value_out"
 
-    def __init__(self, input_shape, action_shape, vf_coef=0.5, ent_coef=0.001, batch_size=128):
+    def __init__(self, input_shape, action_shape, act_coef = 0.5, vf_coef=1, ent_coef=0.01, batch_size=512, ppo_clip=0.2):
         self.state_input = keras.Input(shape=input_shape)
+        self.n_actions=action_shape
+        self.ppo_clip = ppo_clip
         self.batch_size=batch_size
-        model_layers = self._model_layers()
+        #model_layers = self._dense_layers()
+        model_layers = self._conv_layers()
         ent_reg = EntropyRegularizer(ent_coef)
         self._action_out = layers.Dense(
                 action_shape,
@@ -32,10 +35,10 @@ class ModelHolder(object):
         optimizer = keras.optimizers.Adam(lr=0.001)
 
         weights = {
-                self._ACTION_OUT: 1,
+                self._ACTION_OUT: act_coef,
                 self._VALUE_OUT: vf_coef }
         losses = {
-                self._ACTION_OUT: self._action_loss,
+                self._ACTION_OUT: self._ppo_loss,
                 self._VALUE_OUT: "mse"}
         self.model.compile(
                 optimizer=optimizer,
@@ -58,19 +61,40 @@ class ModelHolder(object):
 
         self._cce = keras.losses.CategoricalCrossentropy()
 
-    def _model_layers(self):
+    def _dense_layers(self):
         x = layers.Flatten()(self.state_input)
         x = layers.Dense(256, activation="relu", name="hidden_1")(x)
         x = layers.Dense(64, activation="relu", name="hidden_2")(x)
         return x
 
+    def _conv_layers(self):
+        x = self.state_input
+        x = layers.Conv2D(64, 5, strides=2, activation="relu", name="conv_1", input_shape=x.shape[1:],padding="same")(x)
+        x = layers.Conv2D(32, 3, strides=2, activation="relu", name="conv_2", padding="same")(x)
+        x = layers.Conv2D(8, 3, activation="relu", name="conv_3", padding="same")(x)
+        x = layers.Flatten()(x)
+        return layers.Dense(32, activation="relu", name="dense_1")(x)
+
     def _action_loss(self, y_true, y_pred):
         advantages = y_true[:, :1]
-        actions = y_true[:, 1:]
+        actions_taken = y_true[:, 1:self.n_actions+1]
         return self._cce(actions, y_pred, sample_weight=advantages)
 
-    def train(self, states, discounted_rewards, advantages, actions_taken):
-        action_y = numpy.hstack([advantages, actions_taken])
+    def _ppo_loss(self, y_true, y_pred):
+        advantages = y_true[:, :1]
+        actions_taken = y_true[:, 1:self.n_actions+1]
+        action_pred = y_true[:, 1+self.n_actions:]
+
+        action_prob = y_pred * actions_taken
+        old_action_prob = action_pred * actions_taken
+        r = action_prob/(old_action_prob + 1e-10)
+        p1 = r * advantages
+        p2 = keras.backend.clip(r, min_value=1 - self.ppo_clip, max_value=1 + self.ppo_clip) * advantages
+        loss = -keras.backend.mean(keras.backend.minimum(p1, p2))
+        return loss
+
+    def train(self, states, discounted_rewards, advantages, actions_taken, actions_pred):
+        action_y = numpy.hstack([advantages, actions_taken, actions_pred])
         batch_size = min(states.shape[0], self.batch_size)
         y = {
                 self._VALUE_OUT : discounted_rewards,
@@ -83,7 +107,7 @@ class ModelHolder(object):
                 batch_size=self.batch_size,
                 shuffle=True,
                 initial_epoch=self._epochs,
-                callbacks=[self.reward_callback, self.tb_callback])
+                callbacks=[self.tb_callback])
         self._epochs += 1
 
     def apply(self, state):
@@ -116,18 +140,15 @@ class EntropyRegularizer(keras.regularizers.Regularizer):
     def from_config(cls, config):
         return cls(**config)
 
-class RewardCallback(keras.callbacks.Callback):
+class RewardCallback(object):
     def __init__(self, writer):
         self.writer = writer
         self.total_rewards = 0
         self.last_rewards = 0
 
-    def add_rewards(self, rewards):
+    def report_game(self, game_num, rewards):
         self.total_rewards += rewards
-        self.last_rewards = rewards
-
-    def on_epoch_end(self, epoch, logs=None):
         with self.writer.as_default():
-            tensorflow.summary.scalar('rewards_total', data=self.total_rewards, step=epoch)
-            tensorflow.summary.scalar('rewards_last', data=self.last_rewards, step=epoch)
+            tensorflow.summary.scalar('rewards_total', data=self.total_rewards, step=game_num)
+            tensorflow.summary.scalar('rewards_last', data=rewards, step=game_num)
             self.writer.flush()
