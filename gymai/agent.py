@@ -38,7 +38,7 @@ class A2CAgent:
             self._render(mem)
             state, reward, done, info = self.env.step(mem.action.n)
             state = self.state_converter.convert(state)
-            mem.reward = reward
+            mem.reward = min(reward, 1.)
             memories.append(mem)
             tot_reward += reward
             if self._breakout_end(info):
@@ -53,16 +53,18 @@ class A2CAgent:
         if self._should_render:
             self.env.render()
 
-    def _plot(self, vals, actions, rewards, advantages, target_vals):
+    def _plot(self, vals, actions, rewards, advantages):
         if self._should_render:
             plt.cla()
             plt.axis([0, len(vals), self.end_reward, 3])
             x = numpy.arange(0, len(vals))
+            actions_ent = [a.entropy() for a in actions]
+            actions_prob = [a.action_prob for a in actions]
             plt.plot(x, advantages, c='y')
-            plt.plot(x, target_vals, c='k')
-            plt.plot(x, vals, c='r')
-            plt.plot(x, actions, c='b')
+            plt.plot(x, actions_ent, c='b')
+            plt.plot(x, actions_prob, c='k')
             plt.plot(x, rewards, c='g')
+            plt.plot(x, vals, c='r')
             plt.pause(0.0001)
 
     def _breakout_end(self, info):
@@ -88,7 +90,7 @@ class A2CAgent:
 
 
 
-        self._plot(val_pred, [m.action.entropy() for m in memories], real_discount, advantages, discounted_rewards)
+        self._plot(val_pred, [m.action for m in memories], real_discount, advantages)
 
     def _discount_real(self, rewards):
         current_reward = 0
@@ -119,6 +121,10 @@ class Action(object):
     @property
     def n(self):
         return self._action
+
+    @property
+    def action_prob(self):
+        return self.prediction[self._action]
 
     @property
     def onehot(self):

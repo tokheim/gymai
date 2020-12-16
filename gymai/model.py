@@ -3,12 +3,16 @@ import tensorflow
 import datetime
 from tensorflow import keras
 from tensorflow.keras import layers, losses
+import logging
+
+log = logging.getLogger(__name__)
 
 class ModelHolder(object):
     _ACTION_OUT = "action_out"
     _VALUE_OUT = "value_out"
 
-    def __init__(self, input_shape, action_shape, act_coef = 0.5, vf_coef=1, ent_coef=0.01, batch_size=512, ppo_clip=0.2):
+    def __init__(self, input_shape, action_shape, name, act_coef = 2, vf_coef=1, ent_coef=0.005, batch_size=512, ppo_clip=0.2):
+        self.name = name
         self.state_input = keras.Input(shape=input_shape)
         self.n_actions=action_shape
         self.ppo_clip = ppo_clip
@@ -24,6 +28,7 @@ class ModelHolder(object):
         self._value_out = layers.Dense(
                 1,
                 activation="linear",
+                bias_initializer=keras.initializers.RandomNormal(mean=-0.4),
                 name=self._VALUE_OUT)(model_layers)
 
         self.model = keras.Model(
@@ -47,14 +52,13 @@ class ModelHolder(object):
 
 
         self._epochs = 0
-        log_dir = "logs/run_" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        log_dir = "logs/"+self.name
         writer = tensorflow.summary.create_file_writer(log_dir+"/game")
         self.reward_callback = RewardCallback(writer)
         self.tb_callback = keras.callbacks.TensorBoard(
                 log_dir=log_dir,
-                histogram_freq=1,
+                histogram_freq=50,
                 write_graph=True,
-                write_images=True,
                 update_freq="epoch",
                 profile_batch=0,
                 )
@@ -93,6 +97,12 @@ class ModelHolder(object):
         loss = -keras.backend.mean(keras.backend.minimum(p1, p2))
         return loss
 
+    def _periodic_save(self):
+        if self._epochs % 10 == 0:
+            log.info("saving model")
+            path = "models/"+self.name+".h5"
+            self.model.save(path)
+
     def train(self, states, discounted_rewards, advantages, actions_taken, actions_pred):
         action_y = numpy.hstack([advantages, actions_taken, actions_pred])
         batch_size = min(states.shape[0], self.batch_size)
@@ -109,6 +119,7 @@ class ModelHolder(object):
                 initial_epoch=self._epochs,
                 callbacks=[self.tb_callback])
         self._epochs += 1
+        self._periodic_save()
 
     def apply(self, state):
         data = self.model.predict(state)

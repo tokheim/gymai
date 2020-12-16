@@ -1,5 +1,6 @@
 import argparse
 import logging
+import datetime
 import gym
 from gymai.agent import A2CAgent, ReshapeConverter, ImageConverter, TrainingPlanner
 from gymai.model import ModelHolder
@@ -9,7 +10,7 @@ def main(args):
     train_planner = TrainingPlanner(batch_size=256, train_factor=8)
     #converter = ReshapeConverter(env.observation_space.shape)
     converter = ImageConverter((84, 64), history=2)
-    model = ModelHolder(converter.shape[1:], env.action_space.n, batch_size=train_planner.batch_size)
+    model = ModelHolder(converter.shape[1:], env.action_space.n, batch_size=train_planner.batch_size, name=args.name)
     agent = A2CAgent(env, model, converter)
     while True:
         mems = agent.run()
@@ -18,8 +19,10 @@ def main(args):
 
 
 if __name__ == '__main__':
+    default_name = "run_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     parser = argparse.ArgumentParser('AI gymnastics')
     parser.add_argument('-g', '--game', default='CartPole-v1', type=str)
+    parser.add_argument('-n', '--name', default=default_name, type=str)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     main(args)
