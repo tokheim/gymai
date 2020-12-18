@@ -103,6 +103,9 @@ class ModelHolder(object):
             path = "models/"+self.name+".h5"
             self.model.save(path)
 
+    def load(self, model_name):
+        self.model.load_weights(model_name)
+
     def train(self, states, discounted_rewards, advantages, actions_taken, actions_pred):
         action_y = numpy.hstack([advantages, actions_taken, actions_pred])
         batch_size = min(states.shape[0], self.batch_size)
