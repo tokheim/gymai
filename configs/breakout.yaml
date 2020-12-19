@@ -1,0 +1,20 @@
+env: Breakout-v0
+planner:
+    batch_size: 512
+    train_factor: 4
+    max_mem: 50000
+converter:
+    height: 84
+    width: 64
+    history: 2
+model:
+    type: conv
+    act_coef: 2
+    vf_coef: 1
+    ent_coef: 0.0001
+    ppo_clip: 0.2
+    lr: 0.0001
+agent:
+    discount_gamma: 0.96
+    end_reward: -1
+    discount_mix: 0.9

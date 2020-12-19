@@ -1,0 +1,18 @@
+env: CartPole-v1
+planner:
+    batch_size: 64
+    train_factor: 4
+    max_mem: 1000
+converter:
+    type: flat
+model:
+    type: dense
+    act_coef: 2
+    vf_coef: 1
+    ent_coef: 0.001
+    ppo_clip: 0.2
+    lr: 0.01
+agent:
+    discount_gamma: 0.9
+    end_reward: -5
+    discount_mix: 1.0

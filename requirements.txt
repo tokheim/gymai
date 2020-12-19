@@ -5,3 +5,4 @@ gym
 box2d-py
 gym[atari]
 matplotlib
+pyyaml

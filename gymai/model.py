@@ -1,25 +1,48 @@
 import numpy
 import tensorflow
 import datetime
+import random
 from tensorflow import keras
 from tensorflow.keras import layers, losses
 import logging
 
 log = logging.getLogger(__name__)
 
+def create_model(conf, input_shape, action_shape, train_planner, name):
+    state_input = keras.Input(shape=input_shape)
+    layers = None
+    if conf.get("type") == "conv":
+        layers = _conv_layers(state_input)
+    else:
+        layers = _dense_layers(state_input)
+    ent_reg = EntropyRegularizer(conf.get("ent_coef", 1e-4))
+    weights = {
+            ModelHolder._ACTION_OUT: conf.get("ent_coef", 1),
+            ModelHolder._VALUE_OUT: conf.get("vf_coef", 1)
+    }
+
+    return ModelHolder(
+            state_input,
+            action_shape,
+            name,
+            train_planner,
+            layers,
+            weights,
+            ent_reg,
+            conf.get("ppo_clip", 0.2),
+            conf.get("lr", 1e-4))
+
+
 class ModelHolder(object):
     _ACTION_OUT = "action_out"
     _VALUE_OUT = "value_out"
 
-    def __init__(self, input_shape, action_shape, name, act_coef = 2, vf_coef=1, ent_coef=0.005, batch_size=512, ppo_clip=0.2):
+    def __init__(self, state_input, action_shape, name, train_planner, model_layers, weights, ent_reg, ppo_clip=0.2, lr=1e-4):
         self.name = name
-        self.state_input = keras.Input(shape=input_shape)
+        self.train_planner = train_planner
+        self.state_input = state_input
         self.n_actions=action_shape
         self.ppo_clip = ppo_clip
-        self.batch_size=batch_size
-        #model_layers = self._dense_layers()
-        model_layers = self._conv_layers()
-        ent_reg = EntropyRegularizer(ent_coef)
         self._action_out = layers.Dense(
                 action_shape,
                 activation="softmax",
@@ -37,11 +60,8 @@ class ModelHolder(object):
                 name = "a2c_agent")
         self.model.summary()
         self.model.add_metric(ent_reg.last_loss, name="entropy_loss")
-        optimizer = keras.optimizers.Adam(lr=0.001)
+        optimizer = keras.optimizers.Adam(lr=lr)
 
-        weights = {
-                self._ACTION_OUT: act_coef,
-                self._VALUE_OUT: vf_coef }
         losses = {
                 self._ACTION_OUT: self._ppo_loss,
                 self._VALUE_OUT: "mse"}
@@ -64,20 +84,6 @@ class ModelHolder(object):
                 )
 
         self._cce = keras.losses.CategoricalCrossentropy()
-
-    def _dense_layers(self):
-        x = layers.Flatten()(self.state_input)
-        x = layers.Dense(256, activation="relu", name="hidden_1")(x)
-        x = layers.Dense(64, activation="relu", name="hidden_2")(x)
-        return x
-
-    def _conv_layers(self):
-        x = self.state_input
-        x = layers.Conv2D(64, 5, strides=2, activation="relu", name="conv_1", input_shape=x.shape[1:],padding="same")(x)
-        x = layers.Conv2D(32, 3, strides=2, activation="relu", name="conv_2", padding="same")(x)
-        x = layers.Conv2D(8, 3, activation="relu", name="conv_3", padding="same")(x)
-        x = layers.Flatten()(x)
-        return layers.Dense(32, activation="relu", name="dense_1")(x)
 
     def _action_loss(self, y_true, y_pred):
         advantages = y_true[:, :1]
@@ -106,9 +112,20 @@ class ModelHolder(object):
     def load(self, model_name):
         self.model.load_weights(model_name)
 
-    def train(self, states, discounted_rewards, advantages, actions_taken, actions_pred):
+    def train(self):
+        memories = self.train_planner.release()
+        if len(memories)  == 0:
+            return
+        states = numpy.vstack([m.state for m in memories])
+        discounted_rewards = numpy.vstack([m.discounted_reward for m in memories])
+        advantages = numpy.vstack([m.advantage for m in memories])
+        actions_taken = numpy.vstack([m.action.onehot for m in memories])
+        actions_preds = numpy.vstack([m.action.prediction for m in memories])
+        self._train(states, discounted_rewards, advantages, actions_taken, actions_preds)
+
+    def _train(self, states, discounted_rewards, advantages, actions_taken, actions_pred):
         action_y = numpy.hstack([advantages, actions_taken, actions_pred])
-        batch_size = min(states.shape[0], self.batch_size)
+        batch_size = min(states.shape[0], self.train_planner.batch_size)
         y = {
                 self._VALUE_OUT : discounted_rewards,
                 self._ACTION_OUT : action_y }
@@ -117,7 +134,7 @@ class ModelHolder(object):
                 x=states,
                 y=y,
                 epochs=self._epochs+1,
-                batch_size=self.batch_size,
+                batch_size=batch_size,
                 shuffle=True,
                 initial_epoch=self._epochs,
                 callbacks=[self.tb_callback])
@@ -166,3 +183,47 @@ class RewardCallback(object):
             tensorflow.summary.scalar('rewards_total', data=self.total_rewards, step=game_num)
             tensorflow.summary.scalar('rewards_last', data=rewards, step=game_num)
             self.writer.flush()
+
+class TrainingPlanner(object):
+    def __init__(self, max_mem=10000, min_mem=500, train_factor=2, batch_size=256):
+        self.max_mem = max_mem
+        self.min_mem = min_mem
+        self.train_factor = train_factor
+        self.batch_size = batch_size
+        self.untrained = 0
+        self.memories = []
+
+    def update(self, memories):
+        self.memories.extend(memories)
+        if len(self.memories) - len(memories) < self.min_mem:
+            return
+        self.untrained += len(memories) * int(self.train_factor)
+        to_discard = len(self.memories) - self.max_mem
+        if to_discard > 0:
+            self.memories = self.memories[to_discard:]
+
+    def releasable(self):
+        batches = int(self.untrained / self.batch_size)
+        return min(batches*self.batch_size, len(self.memories))
+
+    def release(self):
+        to_train = self.releasable()
+        if not to_train > 0:
+            return []
+        samples = random.sample(self.memories, to_train)
+        self.untrained -= to_train
+        return samples
+
+def _dense_layers(state_input):
+    x = layers.Flatten()(state_input)
+    x = layers.Dense(256, activation="relu", name="hidden_1")(x)
+    x = layers.Dense(64, activation="relu", name="hidden_2")(x)
+    return x
+
+def _conv_layers(state_input):
+    x = state_input
+    x = layers.Conv2D(64, 5, strides=2, activation="relu", name="conv_1", input_shape=x.shape[1:],padding="same")(x)
+    x = layers.Conv2D(32, 3, strides=2, activation="relu", name="conv_2", padding="same")(x)
+    x = layers.Conv2D(8, 3, activation="relu", name="conv_3", padding="same")(x)
+    x = layers.Flatten()(x)
+    return layers.Dense(32, activation="relu", name="dense_1")(x)
