@@ -30,14 +30,15 @@ def create_model(conf, input_shape, action_shape, train_planner, name):
             weights,
             ent_reg,
             conf.get("ppo_clip", 0.2),
-            conf.get("lr", 1e-4))
+            conf.get("lr", 1e-4),
+            conf.get("expected_value", 0))
 
 
 class ModelHolder(object):
     _ACTION_OUT = "action_out"
     _VALUE_OUT = "value_out"
 
-    def __init__(self, state_input, action_shape, name, train_planner, model_layers, weights, ent_reg, ppo_clip=0.2, lr=1e-4):
+    def __init__(self, state_input, action_shape, name, train_planner, model_layers, weights, ent_reg, ppo_clip=0.2, lr=1e-4, expected_value=0):
         self.name = name
         self.train_planner = train_planner
         self.state_input = state_input
@@ -51,7 +52,7 @@ class ModelHolder(object):
         self._value_out = layers.Dense(
                 1,
                 activation="linear",
-                bias_initializer=keras.initializers.RandomNormal(mean=-0.4),
+                bias_initializer=keras.initializers.Constant(value=expected_value),
                 name=self._VALUE_OUT)(model_layers)
 
         self.model = keras.Model(
@@ -197,7 +198,7 @@ class TrainingPlanner(object):
         self.memories.extend(memories)
         if len(self.memories) - len(memories) < self.min_mem:
             return
-        self.untrained += len(memories) * int(self.train_factor)
+        self.untrained += int(len(memories) * self.train_factor)
         to_discard = len(self.memories) - self.max_mem
         if to_discard > 0:
             self.memories = self.memories[to_discard:]
@@ -216,8 +217,9 @@ class TrainingPlanner(object):
 
 def _dense_layers(state_input):
     x = layers.Flatten()(state_input)
-    x = layers.Dense(256, activation="relu", name="hidden_1")(x)
-    x = layers.Dense(64, activation="relu", name="hidden_2")(x)
+    x = layers.Dense(512, activation="relu", name="hidden_1")(x)
+    x = layers.Dense(256, activation="relu", name="hidden_2")(x)
+    x = layers.Dense(64, activation="relu", name="hidden_3")(x)
     return x
 
 def _conv_layers(state_input):

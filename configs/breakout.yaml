@@ -1,6 +1,7 @@
 env: Breakout-v0
+gamehacks: true
 planner:
-    batch_size: 512
+    batch_size: 1024
     train_factor: 4
     max_mem: 50000
 converter:
@@ -9,12 +10,14 @@ converter:
     history: 2
 model:
     type: conv
-    act_coef: 2
+    act_coef: 1
     vf_coef: 1
-    ent_coef: 0.0001
-    ppo_clip: 0.2
-    lr: 0.0001
+    ent_coef: 0.0000001
+    ppo_clip: 0.1
+    lr: 0.00001
+    expected_value: -0.4
 agent:
     discount_gamma: 0.96
-    end_reward: -1
-    discount_mix: 0.9
+    end_reward: -2
+    discount_mix: 1
+    max_reward: 1

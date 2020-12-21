@@ -1,0 +1,24 @@
+env: Breakout-v0
+gamehacks: false
+planner:
+    batch_size: 256
+    train_factor: 8
+    max_mem: 10000
+converter:
+    height: 84
+    width: 64
+    history: 3
+model:
+    type: conv
+    act_coef: 2
+    vf_coef: 1
+    ent_coef: 0.005
+    ppo_clip: 0.2
+    lr: 0.001
+    #expected_value: -0.4
+    expected_value: 0.1
+agent:
+    discount_gamma: 0.96
+    end_reward: 0
+    discount_mix: 0.9
+    max_reward: 1
