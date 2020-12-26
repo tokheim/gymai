@@ -39,17 +39,18 @@ class A2CAgent:
             mem = self.generate_predictions(state)
             self._render(mem)
             state, reward, done, info = self.env.step(mem.action.n)
+            tot_reward += reward
             state = self.state_converter.convert(state)
+            reward += self.game_hacks.custom_reward(info)
             mem.reward = min(reward, self.max_reward)
             memories.append(mem)
-            tot_reward += reward
             if self.game_hacks.should_end(info):
                 break
         memories[-1].reward += self.end_reward
         self.game_hacks.on_end(memories)
         self._tag_mems(memories)
         self.runs += 1
-        self.model.reward_callback.report_game(self.runs, tot_reward)
+        self.model.reward_callback.report_game(self.runs, tot_reward, len(memories))
         log.info("Run %s frames %s score %s", self.runs, len(memories), tot_reward)
         return memories
 
@@ -77,9 +78,10 @@ class A2CAgent:
         discounted_rewards += (1-self.discount_mix) * real_discount
 
         advantages = discounted_rewards - val_pred
-        for memory, discounted_reward, advantage in zip(memories, discounted_rewards, advantages):
+        for memory, discounted_reward, advantage, real_reward in zip(memories, discounted_rewards, advantages, real_discount):
             memory.discounted_reward = discounted_reward
             memory.advantage = advantage
+            memory.hindsight_reward = real_reward
 
 
 
@@ -113,16 +115,18 @@ class Action(object):
         return vector
 
     def entropy(self):
-        return - sum(self.prediction * numpy.log(numpy.clip(self.prediction, 1e-10, None)))
+        ents = self.prediction * numpy.log(numpy.clip(self.prediction, 1e-10, None))
+        return - sum(ents) / numpy.log(len(self.prediction))
 
 class Memory(object):
-    def __init__(self, state, action, value_prediction, reward=None, discounted_reward=None, advantage=None):
+    def __init__(self, state, action, value_prediction, reward=None, discounted_reward=None, advantage=None, hindsight_reward=None):
         self.state = state
         self.action = action
         self.reward = reward
         self.value_prediction = value_prediction
         self.discounted_reward = discounted_reward
         self.advantage = advantage
+        self.hindsight_reward = hindsight_reward
 
 class ReshapeConverter(object):
     def __init__(self, original_shape):
@@ -203,16 +207,14 @@ class Plotter(object):
 
         actions_ent = [a.entropy() for a in actions]
         actions_prob = [a.action_prob for a in actions]
-        self._setup(self.ax[1], xlim, [0, 2])
+        self._setup(self.ax[1], xlim, [-0.05, 1.05])
         self.ax[1].plot(x, actions_ent, c='b')
         self.ax[1].plot(x, actions_prob, c='k')
         ylim = self._axis([advantages], -1, 1, buff=0.1)
         self._setup(self.ax[2], xlim, ylim)
         self.ax[2].plot(x, advantages)
 
-
-
-        plt.pause(0.0001)
+        plt.pause(0.000001)
 
 def create_converter(conf, env_shape, name):
     if conf.get("type") == "flat":

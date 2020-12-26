@@ -8,14 +8,15 @@ converter:
     type: flat
 model:
     type: dense
-    act_coef: 0.1
-    vf_coef: 10
+    act_coef: 1
+    vf_coef: 0.5
     ent_coef: 0.000001
     ppo_clip: 0.1
-    lr: 0.0001
-    expected_value: -50
+    lr: 0.001
+    epochs: 3
+    expected_value: 2.5
 agent:
-    discount_gamma: 0.95
-    end_reward: -100
+    discount_gamma: 0.7
+    end_reward: 0
     discount_mix: 1
     max_reward: 1

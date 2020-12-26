@@ -2,6 +2,7 @@ import numpy
 import tensorflow
 import datetime
 import random
+import math
 from tensorflow import keras
 from tensorflow.keras import layers, losses
 import logging
@@ -15,7 +16,7 @@ def create_model(conf, input_shape, action_shape, train_planner, name):
         layers = _conv_layers(state_input)
     else:
         layers = _dense_layers(state_input)
-    ent_reg = EntropyRegularizer(conf.get("ent_coef", 1e-4))
+    ent_reg = EntropyRegularizer(conf.get("ent_coef", 1e-4), action_shape)
     weights = {
             ModelHolder._ACTION_OUT: conf.get("ent_coef", 1),
             ModelHolder._VALUE_OUT: conf.get("vf_coef", 1)
@@ -31,14 +32,15 @@ def create_model(conf, input_shape, action_shape, train_planner, name):
             ent_reg,
             conf.get("ppo_clip", 0.2),
             conf.get("lr", 1e-4),
-            conf.get("expected_value", 0))
+            conf.get("expected_value", 0),
+            conf.get("epochs", 1))
 
 
 class ModelHolder(object):
     _ACTION_OUT = "action_out"
     _VALUE_OUT = "value_out"
 
-    def __init__(self, state_input, action_shape, name, train_planner, model_layers, weights, ent_reg, ppo_clip=0.2, lr=1e-4, expected_value=0):
+    def __init__(self, state_input, action_shape, name, train_planner, model_layers, weights, ent_reg, ppo_clip=0.2, lr=1e-4, expected_value=0, epochs = 1):
         self.name = name
         self.train_planner = train_planner
         self.state_input = state_input
@@ -61,7 +63,7 @@ class ModelHolder(object):
                 name = "a2c_agent")
         self.model.summary()
         self.model.add_metric(ent_reg.last_loss, name="entropy_loss")
-        optimizer = keras.optimizers.Adam(lr=lr)
+        optimizer = keras.optimizers.Adam(lr=lr, epsilon=1e-5)
 
         losses = {
                 self._ACTION_OUT: self._ppo_loss,
@@ -73,6 +75,7 @@ class ModelHolder(object):
 
 
         self._epochs = 0
+        self._epochs_per_run = epochs
         log_dir = "logs/"+self.name
         writer = tensorflow.summary.create_file_writer(log_dir+"/game")
         self.reward_callback = RewardCallback(writer)
@@ -105,7 +108,7 @@ class ModelHolder(object):
         return loss
 
     def _periodic_save(self):
-        if self._epochs % 10 == 0:
+        if self._epochs % (10*self._epochs_per_run) == 0:
             log.info("saving model")
             path = "models/"+self.name+".h5"
             self.model.save(path)
@@ -134,12 +137,12 @@ class ModelHolder(object):
         self.model.fit(
                 x=states,
                 y=y,
-                epochs=self._epochs+1,
+                epochs=self._epochs+self._epochs_per_run,
                 batch_size=batch_size,
                 shuffle=True,
                 initial_epoch=self._epochs,
                 callbacks=[self.tb_callback])
-        self._epochs += 1
+        self._epochs += self._epochs_per_run
         self._periodic_save()
 
     def apply(self, state):
@@ -149,15 +152,17 @@ class ModelHolder(object):
 
 
 class EntropyRegularizer(keras.regularizers.Regularizer):
-    def __init__(self, strength):
+    def __init__(self, strength, actions):
         super(EntropyRegularizer, self).__init__()
         self.strength = strength
         self._last_loss = 0
+        self._base = math.log(actions)
+        print("actions + "+str(actions))
 
     def __call__(self, x):
         #minus entropy. Since model seeks to minimize loss, this will
         #move probs to even values where entropy is highest
-        losses = tensorflow.reduce_sum(x * tensorflow.math.log(x+1e-10), 1)
+        losses = tensorflow.reduce_sum(x * tensorflow.math.log(x+1e-10), 1) / self._base
         self._last_loss = tensorflow.reduce_mean(losses)
         return self.strength * tensorflow.reduce_sum(losses)
 
@@ -177,13 +182,34 @@ class RewardCallback(object):
         self.writer = writer
         self.total_rewards = 0
         self.last_rewards = 0
+        self.total_frames = 0
 
-    def report_game(self, game_num, rewards):
+    def report_game(self, game_num, rewards, frames):
         self.total_rewards += rewards
+        self.total_frames += frames
         with self.writer.as_default():
             tensorflow.summary.scalar('rewards_total', data=self.total_rewards, step=game_num)
             tensorflow.summary.scalar('rewards_last', data=rewards, step=game_num)
+            tensorflow.summary.scalar('frames_total', data=self.total_frames, step=game_num)
             self.writer.flush()
+
+class OnPolicyPlanner(object):
+    def __init__(self, batch_size=64, min_batches=4):
+        self.batch_size = batch_size
+        self.min_batches = min_batches
+        self.memories = []
+
+    def update(self, memories):
+        self.memories.extend(memories)
+
+    def release(self):
+        batches = int(len(self.memories) / self.batch_size)
+        if batches < self.min_batches:
+            return []
+        to_release = random.sample(self.memories, batches * self.batch_size)
+        self.memories = []
+        return to_release
+
 
 class TrainingPlanner(object):
     def __init__(self, max_mem=10000, min_mem=500, train_factor=2, batch_size=256):
@@ -214,6 +240,22 @@ class TrainingPlanner(object):
         samples = random.sample(self.memories, to_train)
         self.untrained -= to_train
         return samples
+
+class SampleSelector(object):
+    def __init__(self, target_val, min_ratio=0.5):
+        self.target_val = target_val
+        self.min_ratio = min_ratio
+        self._current_bias = 0
+
+    def select(self, memories):
+        accepted = [m for m in memories if m.hindsight_reward > self.min_ratio]
+        remaining = [m for m in memories if m.hindsight_reward <= self.min_ratio]
+        self._current_bias += len(accepted)
+        to_add = min(len(remaining), self._current_bias)
+        if to_add > 0:
+            self._current_bias -= to_add
+            accepted += random.sample(remaining, to_add)
+        return accepted
 
 def _dense_layers(state_input):
     x = layers.Flatten()(state_input)

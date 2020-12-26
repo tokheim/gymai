@@ -13,21 +13,37 @@ class NoopGameHacks(object):
     def should_end(self, info):
         return False
 
+    def custom_reward(self, info):
+        return 0
+
     def on_end(self, memories):
         pass
 
 class BreakoutHacks(NoopGameHacks):
     def __init__(self):
-        pass
+        self.lives = -1
 
     def on_start(self, env, orig_state):
         for i in range(random.randrange(0, 20)):
-            env.step(0)#randomize start
+            action = random.randrange(0,3)
+            if action > 0:
+                action += 1
+            env.step(action)#randomize start
         state, _, _, _  = env.step(1)#release ball
         return state
 
+    def custom_reward(self, info):
+        lives = info.get('ale.lives', self.lives)
+        reward = 0
+        if lives < self.lives:
+            #reward = -1
+            pass
+        self.lives = lives
+        return reward
+
     def should_end(self, info):
-        return info.get('ale.lives') == 4
+        return False
+        #return info.get('ale.lives', None) < 5
 
 class CartpoleHacks(NoopGameHacks):
     def __init__(self):

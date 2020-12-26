@@ -1,4 +1,4 @@
-env: Breakout-v0
+env: Breakout-v4
 gamehacks: true
 planner:
     batch_size: 1024
@@ -21,3 +21,5 @@ agent:
     end_reward: -2
     discount_mix: 1
     max_reward: 1
+
+#python run.py -n breakout-det --render --plot --test -l models/breakout-cont-e-5.h5 -c configs/breakout.yaml
