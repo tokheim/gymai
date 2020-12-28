@@ -140,6 +140,7 @@ class ModelHolder(object):
     def _normalize(self, data):
         mean = numpy.mean(data)
         stdev = numpy.std(data)
+        stdev = max(stdev, 1e-10)
         return (data - mean) / stdev
 
     def _train(self, states, discounted_rewards, advantages, actions_taken, actions_pred):

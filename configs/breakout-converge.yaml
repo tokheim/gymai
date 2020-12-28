@@ -1,10 +1,9 @@
 #BreakoutDeterministic-v0
 env: Breakout-v0
-gamehacks: true
+gamehacks: false
 planner:
     batch_size: 128
-    train_factor: 8
-    max_mem: 1000
+    min_batches: 6
 converter:
     height: 84
     width: 64
@@ -12,15 +11,15 @@ converter:
 model:
     #loss: 0.0020 - action_out_loss: 0.0137 - value_out_loss: 0.0022 - entropy_loss: -1.3862
     type: conv
-    act_coef: 1
-    vf_coef: 0.5
-    ent_coef: 0.0
+    act_coef: 0.3
+    vf_coef: 5
+    ent_coef: 0.01
     ppo_clip: 0.2
     lr: 0.0003
-    epochs: 8
+    epochs: 4
     expected_value: 0.4
 agent:
     discount_gamma: 0.99
     end_reward: 0
-    discount_mix: 0.9
+    #discount_mix: 0.9
     max_reward: 1
