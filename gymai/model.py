@@ -16,10 +16,10 @@ def create_model(conf, input_shape, action_shape, train_planner, name):
         layers = _conv_layers(state_input)
     else:
         layers = _dense_layers(state_input)
-    ent_reg = EntropyRegularizer(conf.get("ent_coef", 1e-4), action_shape)
+    ent_reg = EntropyRegularizer(conf["ent_coef"], action_shape)
     weights = {
-            ModelHolder._ACTION_OUT: conf.get("ent_coef", 1),
-            ModelHolder._VALUE_OUT: conf.get("vf_coef", 1)
+            ModelHolder._ACTION_OUT: conf["act_coef"],
+            ModelHolder._VALUE_OUT: conf["vf_coef"]
     }
 
     return ModelHolder(
@@ -30,8 +30,8 @@ def create_model(conf, input_shape, action_shape, train_planner, name):
             layers,
             weights,
             ent_reg,
-            conf.get("ppo_clip", 0.2),
-            conf.get("lr", 1e-4),
+            conf["ppo_clip"],
+            conf["lr"],
             conf.get("expected_value", 0),
             conf.get("epochs", 1))
 
@@ -64,10 +64,12 @@ class ModelHolder(object):
         self.model.summary()
         self.model.add_metric(ent_reg.last_loss, name="entropy_loss")
         optimizer = keras.optimizers.Adam(lr=lr, epsilon=1e-5)
+        critic_loss = keras.losses.Huber()
 
         losses = {
                 self._ACTION_OUT: self._ppo_loss,
-                self._VALUE_OUT: "mse"}
+                #self._ACTION_OUT: self._action_loss,
+                self._VALUE_OUT: critic_loss}
         self.model.compile(
                 optimizer=optimizer,
                 loss=losses,
@@ -89,10 +91,17 @@ class ModelHolder(object):
 
         self._cce = keras.losses.CategoricalCrossentropy()
 
+    def _action_cce_loss(self, y_true, y_pred):
+        advantages = y_true[:, :1]
+        actions_taken = y_true[:, 1:self.n_actions+1]
+        return self._cce(actions_taken, y_pred, sample_weight=advantages)
+
     def _action_loss(self, y_true, y_pred):
         advantages = y_true[:, :1]
         actions_taken = y_true[:, 1:self.n_actions+1]
-        return self._cce(actions, y_pred, sample_weight=advantages)
+        action_prob = keras.backend.sum(y_pred * actions_taken, axis=1)
+        return -tensorflow.reduce_mean(advantages * keras.backend.log(action_prob), axis=-1)
+
 
     def _ppo_loss(self, y_true, y_pred):
         advantages = y_true[:, :1]
@@ -123,9 +132,15 @@ class ModelHolder(object):
         states = numpy.vstack([m.state for m in memories])
         discounted_rewards = numpy.vstack([m.discounted_reward for m in memories])
         advantages = numpy.vstack([m.advantage for m in memories])
+        advantages = self._normalize(advantages)
         actions_taken = numpy.vstack([m.action.onehot for m in memories])
         actions_preds = numpy.vstack([m.action.prediction for m in memories])
         self._train(states, discounted_rewards, advantages, actions_taken, actions_preds)
+
+    def _normalize(self, data):
+        mean = numpy.mean(data)
+        stdev = numpy.std(data)
+        return (data - mean) / stdev
 
     def _train(self, states, discounted_rewards, advantages, actions_taken, actions_pred):
         action_y = numpy.hstack([advantages, actions_taken, actions_pred])
@@ -194,9 +209,10 @@ class RewardCallback(object):
             self.writer.flush()
 
 class OnPolicyPlanner(object):
-    def __init__(self, batch_size=64, min_batches=4):
+    def __init__(self, batch_size=64, min_batches=4, max_batches=1e10):
         self.batch_size = batch_size
         self.min_batches = min_batches
+        self.max_batches = max_batches
         self.memories = []
 
     def update(self, memories):
@@ -206,6 +222,7 @@ class OnPolicyPlanner(object):
         batches = int(len(self.memories) / self.batch_size)
         if batches < self.min_batches:
             return []
+        batches = min(batches, self.max_batches)
         to_release = random.sample(self.memories, batches * self.batch_size)
         self.memories = []
         return to_release

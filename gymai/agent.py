@@ -7,7 +7,7 @@ import cv2
 log = logging.getLogger(__name__)
 
 class A2CAgent:
-    def __init__(self, env, model, state_converter, game_hacks, discount_gamma=0.96, end_reward=-1, discount_mix=0.9, max_reward=1, render=True, plotter=None):
+    def __init__(self, env, model, state_converter, game_hacks, discount_gamma=0.96, end_reward=-1, gae_lambda=0.95, max_reward=1, render=True, plotter=None):
         self.env = env
         self.model = model
         self.game_hacks = game_hacks
@@ -17,9 +17,9 @@ class A2CAgent:
         self.runs = 0
         self.end_reward = end_reward
         self.discount_gamma = discount_gamma
-        self.discount_mix = discount_mix
         self._should_render = render
         self._plotter = plotter
+        self.gae_lambda = gae_lambda
 
     def generate_predictions(self, state):
         action_pred, val = self.model.apply(state)
@@ -63,21 +63,14 @@ class A2CAgent:
             self._plotter.plot(vals, actions, rewards, advantages)
 
     def _tag_mems(self, memories):
-        next_vals = [m.value_prediction for m in memories[1:]] + [0]
-
-        next_val_pred = numpy.vstack(next_vals)
         val_pred = numpy.vstack([m.value_prediction for m in memories])
         rewards = numpy.vstack([m.reward for m in memories])
 
-        discounted_rewards = (self.discount_gamma * next_val_pred) + rewards
-        #predicted_future = (val_pred-rewards) / self.discount_gamma
-        #advantages = next_val_pred - predicted_future
-
-        discounted_rewards = self.discount_mix*discounted_rewards
+        advantages = self._gen_adv_est(rewards, val_pred)
         real_discount = self._discount_real(rewards)
-        discounted_rewards += (1-self.discount_mix) * real_discount
+        discounted_rewards = self._discounted_target(val_pred, rewards)
+        discounted_rewrads = advantages + val_pred
 
-        advantages = discounted_rewards - val_pred
         for memory, discounted_reward, advantage, real_reward in zip(memories, discounted_rewards, advantages, real_discount):
             memory.discounted_reward = discounted_reward
             memory.advantage = advantage
@@ -86,6 +79,23 @@ class A2CAgent:
 
 
         self._plot(val_pred, [m.action for m in memories], real_discount, advantages)
+
+    def _discounted_target(self, val_pred, rewards):
+        next_vals = numpy.roll(val_pred, -1)
+        next_vals[-1] = 0
+        return (self.discount_gamma * next_vals) + rewards
+
+    def _gen_adv_est(self, rewards, val_pred):
+        advantages = numpy.zeros(rewards.shape)
+        gae = 0
+        last_val = 0
+        for i in reversed(range(len(rewards))):
+            delta = rewards[i] + (self.discount_gamma * last_val) - val_pred[i]
+            last_val = val_pred[i]
+            gae = delta + (self.discount_gamma * self.gae_lambda * gae)
+            advantages[i] = gae# + val_pred[i]
+        return advantages
+
 
     def _discount_real(self, rewards):
         current_reward = 0

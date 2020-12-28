@@ -13,8 +13,8 @@ def main(args):
     conf = _load_conf(args.config)
     _load_extra_envs(conf)
     env = gym.make(conf["env"])
-    train_planner = TrainingPlanner(**conf["planner"])
-    train_planner = OnPolicyPlanner(conf["planner"]["batch_size"])
+    #train_planner = TrainingPlanner(**conf["planner"])
+    train_planner = OnPolicyPlanner(**conf["planner"])
     converter = create_converter(conf["converter"], env.observation_space.shape, args.name)
     model = create_model(conf["model"], converter.shape[1:], env.action_space.n, train_planner, args.name)
     plotter = None
