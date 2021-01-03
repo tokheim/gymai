@@ -1,0 +1,22 @@
+env: LunarLander-v2
+planner:
+    batch_size: 256
+    min_batches: 5
+converter:
+    type: flat
+    history: 2
+    skip: 5
+model:
+    type: dense
+    act_coef: 0.5
+    vf_coef: 3
+    ent_coef: 0.01
+    ppo_clip: 0.2
+    lr: 0.001
+    epochs: 5
+    expected_value: -20
+agent:
+    discount_gamma: 0.9
+    gae_lambda: 0.9
+    end_reward: 0
+    max_reward: 1000

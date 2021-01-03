@@ -25,13 +25,15 @@ def main(args):
     hacks = gamehacks.NoopGameHacks()
     if conf.get("gamehacks", False):
         hacks = gamehacks.load_hacks(conf["env"])
-    agent = A2CAgent(env, model, converter, hacks, render=args.render, plotter=plotter, **conf["agent"])
-    sample_selector = SampleSelector(0.2, min_ratio=0.1)
+    agent = A2CAgent(env, model, converter, hacks, render=args.render, plotter=plotter, max_action=args.max_action, **conf["agent"])
+    sample_selector = None
+    if conf.get("sample_selector") is not None:
+        sample_selector = SampleSelector(**conf["sample_selector"])
     while True:
         mems = agent.run()
+        if sample_selector is not None:
+            mems = sample_selector.select(mems)
         if not args.test:
-            #mems = sample_selector.select(mems)
-
             train_planner.update(mems)
             model.train()
 
@@ -45,6 +47,7 @@ def _load_extra_envs(conf):
         return
     try:
         from pytetris import tetrisgym
+        import vizdoomgym
     except ImportError as e:
         log.warn("unable to load pytetris")
 
@@ -58,6 +61,7 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--render', action="store_true")
     parser.add_argument('-p', '--plot', action="store_true")
     parser.add_argument('-t', '--test', action="store_true")
+    parser.add_argument('-m', '--max-action', action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     main(args)

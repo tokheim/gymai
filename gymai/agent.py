@@ -7,7 +7,7 @@ import cv2
 log = logging.getLogger(__name__)
 
 class A2CAgent:
-    def __init__(self, env, model, state_converter, game_hacks, discount_gamma=0.96, end_reward=-1, gae_lambda=0.95, max_reward=1, render=True, plotter=None):
+    def __init__(self, env, model, state_converter, game_hacks, discount_gamma=0.96, end_reward=-1, gae_lambda=0.95, max_reward=1, render=True, plotter=None, max_action=False):
         self.env = env
         self.model = model
         self.game_hacks = game_hacks
@@ -20,11 +20,14 @@ class A2CAgent:
         self._should_render = render
         self._plotter = plotter
         self.gae_lambda = gae_lambda
+        self._max_action = max_action
 
     def generate_predictions(self, state):
         action_pred, val = self.model.apply(state)
         action = Action(action_pred)
         memory = Memory(state, action, val)
+        if self._max_action:
+            action.max_action()
         return memory
 
     def run(self):
@@ -108,11 +111,17 @@ class A2CAgent:
 class Action(object):
     def __init__(self, prediction):
         self.prediction = prediction
-        self._action = numpy.random.choice(len(prediction), p=prediction)
+        self.random_action()
 
     @property
     def n(self):
         return self._action
+
+    def max_action(self):
+        self._action = numpy.argmax(self.prediction)
+
+    def random_action(self):
+        self._action = numpy.random.choice(len(self.prediction), p=self.prediction)
 
     @property
     def action_prob(self):
@@ -139,36 +148,38 @@ class Memory(object):
         self.hindsight_reward = hindsight_reward
 
 class ReshapeConverter(object):
-    def __init__(self, original_shape):
-        self.shape = tuple([1] + list(original_shape))
+    def __init__(self, original_shape, history_picks):
+        self.shape = tuple([1, len(history_picks)] + list(original_shape))
+        self._state=numpy.zeros(tuple([1, max(history_picks)+1] + list(original_shape)))
+        self._hists=history_picks
 
     def convert(self, state):
-        return numpy.reshape(state, self.shape)
+        numpy.roll(self._state, 1, axis=1)
+        self._state[0,0,:] = state
+        return self._state[:,self._hists,:]
 
     def reset(self):
-        pass
+        self._state = numpy.zeros(self._state.shape)
 
 class ImageConverter(object):
-    def __init__(self, dim, history=1, name="test"):
+    def __init__(self, dim, history_picks, name="test"):
         self.name = name
         self._img_dim = dim
-        self._state = numpy.zeros(tuple([1]+list(self._img_dim)+[history]))
+        self._state = numpy.zeros(tuple([1]+list(self._img_dim)+[max(history_picks)+1]))
         self._sample_rate = 0.001
         self._sampled = 0
         self._max_sample = 20
         self._bw_trans = [0.299, 0.587, 0.114]
+        self.shape = tuple([1]+list(self._img_dim)+[len(history_picks)])
+        self._history_picks = history_picks
         self.reset()
-
-    @property
-    def shape(self):
-        return self._state.shape
 
     @property
     def history(self):
         return self.shape[-1]
 
     def reset(self):
-        self._state = numpy.zeros(self.shape, dtype="float")
+        self._state = numpy.zeros(self._state.shape, dtype="float")
 
     def convert(self, state):
         img = cv2.resize(state, dsize=self._img_dim[::-1], interpolation=cv2.INTER_CUBIC)
@@ -178,7 +189,7 @@ class ImageConverter(object):
         self._state[:,:,:,0] = scaled
         if random.random() < self._sample_rate:
             self.save_img()
-        return self._state
+        return self._state[:,:,:,self._history_picks]
 
     def save_img(self):
         bw = numpy.vstack([self._state[0,:,:,i] for i in range(self.history)]) * 255.0
@@ -188,6 +199,14 @@ class ImageConverter(object):
         path = "images/"+self.name+"-"+str(self._sampled%self._max_sample)+".png"
         cv2.imwrite(path, img)
         self._sampled += 1
+
+def create_converter(conf, env_shape, name):
+    history = conf.get("history", 1)
+    skips = conf.get("skip", 0)
+    hist_picks = list(range(0, history*(skips+1), skips+1))
+    if conf.get("type") == "flat":
+        return ReshapeConverter(env_shape, hist_picks)
+    return ImageConverter((conf["height"], conf["width"]), hist_picks, name=name)
 
 class Plotter(object):
     def __init__(self, name):
@@ -225,8 +244,3 @@ class Plotter(object):
         self.ax[2].plot(x, advantages)
 
         plt.pause(0.000001)
-
-def create_converter(conf, env_shape, name):
-    if conf.get("type") == "flat":
-        return ReshapeConverter(env_shape)
-    return ImageConverter((conf["height"], conf["width"]), conf["history"], name=name)

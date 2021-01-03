@@ -11,11 +11,7 @@ log = logging.getLogger(__name__)
 
 def create_model(conf, input_shape, action_shape, train_planner, name):
     state_input = keras.Input(shape=input_shape)
-    layers = None
-    if conf.get("type") == "conv":
-        layers = _conv_layers(state_input)
-    else:
-        layers = _dense_layers(state_input)
+    layers = _gen_layers(conf.get("type"), state_input)
     ent_reg = EntropyRegularizer(conf["ent_coef"], action_shape)
     weights = {
             ModelHolder._ACTION_OUT: conf["act_coef"],
@@ -33,19 +29,29 @@ def create_model(conf, input_shape, action_shape, train_planner, name):
             conf["ppo_clip"],
             conf["lr"],
             conf.get("expected_value", 0),
-            conf.get("epochs", 1))
+            conf.get("epochs", 1),
+            conf.get("normalize_advantage", True))
+
+def _gen_layers(lyrtype, state_input):
+    if lyrtype == "conv":
+        return _conv_layers(state_input)
+    elif lyrtype == "conv2":
+        return _conv_layers_dm(state_input)
+    return _dense_layers(state_input)
+
 
 
 class ModelHolder(object):
     _ACTION_OUT = "action_out"
     _VALUE_OUT = "value_out"
 
-    def __init__(self, state_input, action_shape, name, train_planner, model_layers, weights, ent_reg, ppo_clip=0.2, lr=1e-4, expected_value=0, epochs = 1):
+    def __init__(self, state_input, action_shape, name, train_planner, model_layers, weights, ent_reg, ppo_clip=0.2, lr=1e-4, expected_value=0, epochs = 1, normalize_adv=True):
         self.name = name
         self.train_planner = train_planner
         self.state_input = state_input
         self.n_actions=action_shape
         self.ppo_clip = ppo_clip
+        self.normalize_adv = normalize_adv
         self._action_out = layers.Dense(
                 action_shape,
                 activation="softmax",
@@ -132,7 +138,8 @@ class ModelHolder(object):
         states = numpy.vstack([m.state for m in memories])
         discounted_rewards = numpy.vstack([m.discounted_reward for m in memories])
         advantages = numpy.vstack([m.advantage for m in memories])
-        advantages = self._normalize(advantages)
+        if self.normalize_adv:
+            advantages = self._normalize(advantages)
         actions_taken = numpy.vstack([m.action.onehot for m in memories])
         actions_preds = numpy.vstack([m.action.prediction for m in memories])
         self._train(states, discounted_rewards, advantages, actions_taken, actions_preds)
@@ -203,6 +210,8 @@ class RewardCallback(object):
     def report_game(self, game_num, rewards, frames):
         self.total_rewards += rewards
         self.total_frames += frames
+        if self.writer is None:
+            return
         with self.writer.as_default():
             tensorflow.summary.scalar('rewards_total', data=self.total_rewards, step=game_num)
             tensorflow.summary.scalar('rewards_last', data=rewards, step=game_num)
@@ -289,3 +298,11 @@ def _conv_layers(state_input):
     x = layers.Conv2D(8, 3, activation="relu", name="conv_3", padding="same")(x)
     x = layers.Flatten()(x)
     return layers.Dense(32, activation="relu", name="dense_1")(x)
+
+def _conv_layers_dm(state_input):
+    x = state_input
+    x = layers.Conv2D(16, 8, strides=3, activation="relu", name="conv_1", input_shape=x.shape[1:],padding="same")(x)
+    x = layers.Conv2D(32, 4, strides=2, activation="relu", name="conv_2",padding="same")(x)
+    x = layers.Flatten()(x)
+    return layers.Dense(256, activation="relu", name="dense_2")(x)
+

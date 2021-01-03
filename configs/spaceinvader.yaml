@@ -1,0 +1,30 @@
+env: SpaceInvadersDeterministic-v0
+gamehacks: false
+planner:
+    batch_size: 512
+    min_batches: 6
+converter:
+    #110x84
+    height: 110
+    width: 84
+    history: 4
+model:
+    type: conv2
+    #act_coef: 0.1
+    act_coef: 0.5
+    #vf_coef: 5
+    vf_coef: 1
+    #ent_coef: 0.001
+    ent_coef: 0.000001
+    ppo_clip: 0.2
+    #lr: 0.0003
+    lr: 0.000001
+    epochs: 6
+    expected_value: 0.3
+    #normalize_advantage: True
+    normalize_advantage: False
+agent:
+    discount_gamma: 0.99
+    gae_lambda: 0.8
+    end_reward: 0
+    max_reward: 1
