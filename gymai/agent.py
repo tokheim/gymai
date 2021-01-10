@@ -7,7 +7,7 @@ import cv2
 log = logging.getLogger(__name__)
 
 class A2CAgent:
-    def __init__(self, env, model, state_converter, game_hacks, discount_gamma=0.96, end_reward=-1, gae_lambda=0.95, max_reward=1, render=True, plotter=None, max_action=False):
+    def __init__(self, env, model, state_converter, game_hacks, discount_gamma=0.96, end_reward=-1, gae_lambda=0.95, max_reward=1, render=True, plotter=None, max_action=False, stickiness = 0):
         self.env = env
         self.model = model
         self.game_hacks = game_hacks
@@ -21,6 +21,7 @@ class A2CAgent:
         self._plotter = plotter
         self.gae_lambda = gae_lambda
         self._max_action = max_action
+        self._action_repeat = stickiness+1
 
     def generate_predictions(self, state):
         action_pred, val = self.model.apply(state)
@@ -41,7 +42,7 @@ class A2CAgent:
         while not done:
             mem = self.generate_predictions(state)
             self._render(mem)
-            state, reward, done, info = self.env.step(mem.action.n)
+            state, reward, done, info = self._perform_action(mem.action)
             tot_reward += reward
             state = self.state_converter.convert(state)
             reward += self.game_hacks.custom_reward(info)
@@ -56,6 +57,18 @@ class A2CAgent:
         self.model.reward_callback.report_game(self.runs, tot_reward, len(memories))
         log.info("Run %s frames %s score %s", self.runs, len(memories), tot_reward)
         return memories
+
+    def _perform_action(self, action):
+        cum_reward = 0
+        state = None
+        done = False
+        info = {}
+        for _ in range(self._action_repeat):
+            state, reward, done, info = self.env.step(action.n)
+            cum_reward += reward
+            if done:
+                break
+        return state, cum_reward, done, info
 
     def _render(self, memory):
         if self._should_render:
@@ -162,16 +175,17 @@ class ReshapeConverter(object):
         self._state = numpy.zeros(self._state.shape)
 
 class ImageConverter(object):
-    def __init__(self, dim, history_picks, name="test"):
+    def __init__(self, dim, history_picks, name="test", colored=False):
         self.name = name
+        self.colored = colored
+        self._history_picks = self._colored_picks(history_picks)
         self._img_dim = dim
-        self._state = numpy.zeros(tuple([1]+list(self._img_dim)+[max(history_picks)+1]))
+        self._state = numpy.zeros(tuple([1]+list(self._img_dim)+[max(self._history_picks)+1]))
         self._sample_rate = 0.001
         self._sampled = 0
         self._max_sample = 20
         self._bw_trans = [0.299, 0.587, 0.114]
-        self.shape = tuple([1]+list(self._img_dim)+[len(history_picks)])
-        self._history_picks = history_picks
+        self.shape = tuple([1]+list(self._img_dim)+[len(self._history_picks)])
         self.reset()
 
     @property
@@ -183,13 +197,33 @@ class ImageConverter(object):
 
     def convert(self, state):
         img = cv2.resize(state, dsize=self._img_dim[::-1], interpolation=cv2.INTER_CUBIC)
-        bw = self._bw_trans[0]*img[:,:,0] + self._bw_trans[1]*img[:,:,1] + self._bw_trans[2]*img[:,:,2]
-        scaled = bw / 255.0
-        self._state = numpy.roll(self._state, 1, axis=-1)
-        self._state[:,:,:,0] = scaled
+        if not self.colored:
+            img = self._blackwhite(img,0) + self._blackwhite(img, 1) + self._blackwhite(img, 2)
+        scaled = img / 255.0
+        self._state = numpy.roll(self._state, self.color_bands, axis=-1)
+        self._state[:,:,:,0:self.color_bands] = scaled
         if random.random() < self._sample_rate:
             self.save_img()
         return self._state[:,:,:,self._history_picks]
+
+    def _blackwhite(self, img, band):
+        return self._bw_trans[band]*img[:,:,band:band+1]
+
+    @property
+    def color_bands(self):
+        if self.colored:
+            return 3
+        return 1
+
+    def _colored_picks(self, history_picks):
+        if not self.colored:
+            return history_picks
+        picks = []
+        for hist in history_picks:
+            offset = hist*self.color_bands
+            picks.extend([offset, offset+1, offset+2])
+        return picks
+
 
     def save_img(self):
         bw = numpy.vstack([self._state[0,:,:,i] for i in range(self.history)]) * 255.0
@@ -206,7 +240,7 @@ def create_converter(conf, env_shape, name):
     hist_picks = list(range(0, history*(skips+1), skips+1))
     if conf.get("type") == "flat":
         return ReshapeConverter(env_shape, hist_picks)
-    return ImageConverter((conf["height"], conf["width"]), hist_picks, name=name)
+    return ImageConverter((conf["height"], conf["width"]), hist_picks, colored=conf.get("colored", False), name=name)
 
 class Plotter(object):
     def __init__(self, name):

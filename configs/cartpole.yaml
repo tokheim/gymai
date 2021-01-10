@@ -10,10 +10,13 @@ model:
     act_coef: 1
     vf_coef: 1
     ent_coef: 0.0001
-    ppo_clip: 0.1
+    ppo_clip: 0.5
     lr: 0.001
+    end_lr: 0
     epochs: 6
     expected_value: 6
+    train_steps: 130
+    end_ppo_clip: 0
 agent:
     discount_gamma: 0.9
     end_reward: 0

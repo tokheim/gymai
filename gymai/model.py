@@ -3,6 +3,7 @@ import tensorflow
 import datetime
 import random
 import math
+import tensorflow
 from tensorflow import keras
 from tensorflow.keras import layers, losses
 import logging
@@ -17,6 +18,18 @@ def create_model(conf, input_shape, action_shape, train_planner, name):
             ModelHolder._ACTION_OUT: conf["act_coef"],
             ModelHolder._VALUE_OUT: conf["vf_coef"]
     }
+    steps = conf.get("train_steps", 1e9)
+    lr = conf["lr"]
+    lr_scheduler = LinearScheduler(
+        steps=steps,
+        start=lr,
+        end=conf.get("end_lr", lr))
+    clip = conf["ppo_clip"]
+    clip_scheduler = LinearScheduler(
+        steps=steps,
+        start=clip,
+        end=conf.get("end_ppo_clip", clip))
+
 
     return ModelHolder(
             state_input,
@@ -26,8 +39,8 @@ def create_model(conf, input_shape, action_shape, train_planner, name):
             layers,
             weights,
             ent_reg,
-            conf["ppo_clip"],
-            conf["lr"],
+            clip_scheduler,
+            keras.callbacks.LearningRateScheduler(lr_scheduler.schedule),
             conf.get("expected_value", 0),
             conf.get("epochs", 1),
             conf.get("normalize_advantage", True))
@@ -45,12 +58,11 @@ class ModelHolder(object):
     _ACTION_OUT = "action_out"
     _VALUE_OUT = "value_out"
 
-    def __init__(self, state_input, action_shape, name, train_planner, model_layers, weights, ent_reg, ppo_clip=0.2, lr=1e-4, expected_value=0, epochs = 1, normalize_adv=True):
+    def __init__(self, state_input, action_shape, name, train_planner, model_layers, weights, ent_reg, ppo_scheduler, lr_scheduler, expected_value=0, epochs = 1, normalize_adv=True):
         self.name = name
         self.train_planner = train_planner
         self.state_input = state_input
         self.n_actions=action_shape
-        self.ppo_clip = ppo_clip
         self.normalize_adv = normalize_adv
         self._action_out = layers.Dense(
                 action_shape,
@@ -69,7 +81,10 @@ class ModelHolder(object):
                 name = "a2c_agent")
         self.model.summary()
         self.model.add_metric(ent_reg.last_loss, name="entropy_loss")
-        optimizer = keras.optimizers.Adam(lr=lr, epsilon=1e-5)
+        self.ppo_scheduler = ppo_scheduler
+        self.ppo_clip = tensorflow.Variable(ppo_scheduler.schedule(0))
+        self.lr_scheduler = lr_scheduler
+        optimizer = keras.optimizers.Adam(epsilon=1e-5)
         critic_loss = keras.losses.Huber()
 
         losses = {
@@ -151,6 +166,8 @@ class ModelHolder(object):
         return (data - mean) / stdev
 
     def _train(self, states, discounted_rewards, advantages, actions_taken, actions_pred):
+        self.ppo_clip.assign(self.ppo_scheduler.schedule(self._epochs))
+        log.info("lr "+str(self.ppo_clip))
         action_y = numpy.hstack([advantages, actions_taken, actions_pred])
         batch_size = min(states.shape[0], self.train_planner.batch_size)
         y = {
@@ -164,7 +181,7 @@ class ModelHolder(object):
                 batch_size=batch_size,
                 shuffle=True,
                 initial_epoch=self._epochs,
-                callbacks=[self.tb_callback])
+                callbacks=[self.tb_callback, self.lr_scheduler])
         self._epochs += self._epochs_per_run
         self._periodic_save()
 
@@ -172,6 +189,15 @@ class ModelHolder(object):
         data = self.model.predict(state)
         return data[0][0], data[1][0]
 
+class LinearScheduler(object):
+    def __init__(self, steps, start=1.0, end=1.0):
+        self.start = start
+        self.end = end
+        self.steps = float(steps)
+
+    def schedule(self, epoch, *kargs, **kwargs):
+        ratio = min(epoch/self.steps, 1.0)
+        return (ratio * self.end) + ((1-ratio) * self.start)
 
 
 class EntropyRegularizer(keras.regularizers.Regularizer):

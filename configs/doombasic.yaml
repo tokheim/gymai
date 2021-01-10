@@ -1,0 +1,30 @@
+env: VizdoomBasic-v0
+gamehacks: false
+extended_envs: true
+planner:
+    batch_size: 128
+    min_batches: 4
+converter:
+    height: 45
+    width: 60
+    colored: True
+    history: 1
+    skip: 0
+model:
+    #loss: 0.0020 - action_out_loss: 0.0137 - value_out_loss: 0.0022 - entropy_loss: -1.3862
+    type: conv2
+    act_coef: 0.1
+    vf_coef: 10
+    ent_coef: 0.01
+    ppo_clip: 0.05
+    lr: 0.003
+    epochs: 20
+    expected_value: 0.4
+    normalize_advantage: True
+agent:
+    discount_gamma: 0.8
+    #gae_lambda: 0.9
+    gae_lambda: 0.8
+    end_reward: -15
+    max_reward: 1000
+    stickiness: 6

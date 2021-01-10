@@ -1,25 +1,31 @@
-env: Breakout-v4
-gamehacks: true
+#BreakoutDeterministic-v1
+env: Breakout-v0
+gamehacks: false
 planner:
-    batch_size: 1024
-    train_factor: 4
-    max_mem: 50000
+    #batch_size: 128
+    batch_size: 512
+    min_batches: 6
 converter:
     height: 84
     width: 64
-    history: 2
+    history: 3
 model:
+    #loss: 0.0020 - action_out_loss: 0.0137 - value_out_loss: 0.0022 - entropy_loss: -1.3862
     type: conv
     act_coef: 1
-    vf_coef: 1
-    ent_coef: 0.0000001
-    ppo_clip: 0.1
-    lr: 0.00001
-    expected_value: -0.4
+    vf_coef: 0.5
+    #ent_coef: 0.01
+    ent_coef: 0.0001
+    ppo_clip: 0.2
+    #lr: 0.0003
+    lr: 0.000001
+    epochs: 4
+    expected_value: 0.4
+    #normalize_advantage: True
+    normalize_advantage: False
 agent:
-    discount_gamma: 0.96
-    end_reward: -2
-    discount_mix: 1
+    discount_gamma: 0.99
+    #gae_lambda: 0.9
+    gae_lambda: 0.8
+    end_reward: 0
     max_reward: 1
-
-#python run.py -n breakout-det --render --plot --test -l models/breakout-cont-e-5.h5 -c configs/breakout.yaml

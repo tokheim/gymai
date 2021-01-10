@@ -3,3 +3,5 @@ env/
 logs/
 models/
 images/
+_vizdoom.ini
+_vizdoom/
