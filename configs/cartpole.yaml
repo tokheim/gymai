@@ -1,23 +1,27 @@
 env: CartPole-v1
 planner:
-    batch_size: 128
-    min_batches: 3
-    #max_batches: 5
+    batch_size: 32
+    min_batches: 4
 converter:
     type: flat
 model:
     type: dense
     act_coef: 1
     vf_coef: 1
-    ent_coef: 0.0001
+    ent_coef: 0.01
     ppo_clip: 0.5
     lr: 0.001
     end_lr: 0
-    epochs: 6
+    epochs: 3
     expected_value: 6
-    train_steps: 130
+    train_steps: 1000
     end_ppo_clip: 0
-agent:
+rewardShaper:
     discount_gamma: 0.9
+    gae_lambda: 0.9
+executor:
+    samples: 16
+    workers: 8
+agent:
     end_reward: 0
     max_reward: 1

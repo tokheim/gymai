@@ -167,7 +167,7 @@ class ModelHolder(object):
 
     def _train(self, states, discounted_rewards, advantages, actions_taken, actions_pred):
         self.ppo_clip.assign(self.ppo_scheduler.schedule(self._epochs))
-        log.info("lr "+str(self.ppo_clip))
+        log.info("lr scale "+str(1-self.ppo_scheduler.ratio_done(self._epochs)))
         action_y = numpy.hstack([advantages, actions_taken, actions_pred])
         batch_size = min(states.shape[0], self.train_planner.batch_size)
         y = {
@@ -196,8 +196,11 @@ class LinearScheduler(object):
         self.steps = float(steps)
 
     def schedule(self, epoch, *kargs, **kwargs):
-        ratio = min(epoch/self.steps, 1.0)
+        ratio = self.ratio_done(epoch)
         return (ratio * self.end) + ((1-ratio) * self.start)
+
+    def ratio_done(self, epoch):
+        return min(epoch/self.steps, 1.0)
 
 
 class EntropyRegularizer(keras.regularizers.Regularizer):
@@ -206,7 +209,6 @@ class EntropyRegularizer(keras.regularizers.Regularizer):
         self.strength = strength
         self._last_loss = 0
         self._base = math.log(actions)
-        print("actions + "+str(actions))
 
     def __call__(self, x):
         #minus entropy. Since model seeks to minimize loss, this will

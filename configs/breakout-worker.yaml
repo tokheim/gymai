@@ -1,0 +1,33 @@
+#BreakoutDeterministic-v1
+env: Breakout-v0
+gamehacks: false
+planner:
+    #batch_size: 128
+    batch_size: 32
+    min_batches: 8
+converter:
+    height: 84
+    width: 64
+    history: 3
+model:
+    type: conv
+    act_coef: 1
+    vf_coef: 1
+    ent_coef: 0.01
+    ppo_clip: 0.1
+    lr: 0.0003
+    epochs: 3
+    expected_value: 0.4
+    normalize_advantage: True
+    train_steps: 100000
+    end_ppo_clip: 0
+    end_lr: 0
+rewardShaper:
+    discount_gamma: 0.99
+    gae_lambda: 0.9
+executor:
+    samples: 32
+    workers: 8
+agent:
+    end_reward: 0
+    max_reward: 1
