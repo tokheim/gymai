@@ -34,6 +34,8 @@ class SequentialExecutor(object):
         mems = agent.run_frames(self.samples)
         if should_callback:
             self.game_callback.update(mems)
+        else:
+            self.game_callback.background_update(mems)
         self.train_planner.update(mems)
 
 
@@ -43,8 +45,19 @@ class GameCallbacker(object):
         self.plotter = plotter
         self.reward_grapher = reward_graph
         self.runs = 0
+        self.frames = 0
+        self.running_total_rewards = 0
+
+    def background_update(self, memories):
+        self.frames += len(memories)
+        self.runs += sum(m.done for m in memories)
+        self.running_total_rewards += sum(m.unshaped_reward for m in self.memories)
+        if self.plotter is not None:
+            self.plotter.refresh()
+
 
     def update(self, memories):
+        self.background_update(memories)
         last_done = 0
         for i, mem in enumerate(memories):
             if mem.done:
@@ -55,11 +68,10 @@ class GameCallbacker(object):
         self.memories.extend(memories[last_done:])
 
     def _callback(self):
-        self.runs += 1
         tot_reward = sum(m.unshaped_reward for m in self.memories)
         if self.plotter is not None:
             self.plotter.plot_mems(self.memories)
         if self.reward_grapher is not None:
-            self.reward_grapher.report_game(self.runs, tot_reward, len(self.memories))
+            self.reward_grapher.report_game(self.runs, tot_reward, self.frames, self.running_total_rewards)
         log.info("Run %s frames %s score %s", self.runs, len(self.memories), tot_reward)
 

@@ -10,7 +10,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-def create_model(conf, input_shape, action_shape, train_planner, name):
+def create_model(conf, input_shape, action_shape, train_planner, name, start_epoch=0):
     state_input = keras.Input(shape=input_shape)
     layers = _gen_layers(conf.get("type"), state_input)
     ent_reg = EntropyRegularizer(conf["ent_coef"], action_shape)
@@ -43,7 +43,8 @@ def create_model(conf, input_shape, action_shape, train_planner, name):
             keras.callbacks.LearningRateScheduler(lr_scheduler.schedule),
             conf.get("expected_value", 0),
             conf.get("epochs", 1),
-            conf.get("normalize_advantage", True))
+            conf.get("normalize_advantage", True),
+            start_epoch)
 
 def _gen_layers(lyrtype, state_input):
     if lyrtype == "conv":
@@ -58,7 +59,7 @@ class ModelHolder(object):
     _ACTION_OUT = "action_out"
     _VALUE_OUT = "value_out"
 
-    def __init__(self, state_input, action_shape, name, train_planner, model_layers, weights, ent_reg, ppo_scheduler, lr_scheduler, expected_value=0, epochs = 1, normalize_adv=True):
+    def __init__(self, state_input, action_shape, name, train_planner, model_layers, weights, ent_reg, ppo_scheduler, lr_scheduler, expected_value=0, epochs = 1, normalize_adv=True, start_epoch=0):
         self.name = name
         self.train_planner = train_planner
         self.state_input = state_input
@@ -97,7 +98,7 @@ class ModelHolder(object):
                 loss_weights=weights)
 
 
-        self._epochs = 0
+        self._epochs = start_epoch
         self._epochs_per_run = epochs
         log_dir = "logs/"+self.name
         writer = tensorflow.summary.create_file_writer(log_dir+"/game")
@@ -231,19 +232,14 @@ class EntropyRegularizer(keras.regularizers.Regularizer):
 class RewardCallback(object):
     def __init__(self, writer):
         self.writer = writer
-        self.total_rewards = 0
-        self.last_rewards = 0
-        self.total_frames = 0
 
-    def report_game(self, game_num, rewards, frames):
-        self.total_rewards += rewards
-        self.total_frames += frames
+    def report_game(self, game_num, rewards, frames, total_rewards):
         if self.writer is None:
             return
         with self.writer.as_default():
-            tensorflow.summary.scalar('rewards_total', data=self.total_rewards, step=game_num)
+            tensorflow.summary.scalar('rewards_total', data=total_rewards, step=game_num)
             tensorflow.summary.scalar('rewards_last', data=rewards, step=game_num)
-            tensorflow.summary.scalar('frames_total', data=self.total_frames, step=game_num)
+            tensorflow.summary.scalar('frames_total', data=frames, step=game_num)
             self.writer.flush()
 
 class OnPolicyPlanner(object):

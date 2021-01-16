@@ -64,7 +64,6 @@ class A2CAgent:
         return memories
 
     def run(self, max_frames=1e6):
-        self.state_converter.reset()
         done = False
         memories = []
         state = self._last_state
@@ -284,9 +283,12 @@ def create_converter(conf, env_shape, name):
 
 class Plotter(object):
     def __init__(self, name, reward_shaper):
+        plt.ion()
         ax = []
         fig, ax = plt.subplots(3, 1)
         fig.canvas.set_window_title(name)
+        self.fig = fig
+        fig.show()
         self.ax = ax
         self.reward_shaper = reward_shaper
 
@@ -308,6 +310,9 @@ class Plotter(object):
         advantages = numpy.vstack([m.advantage for m in memories])
         self.plot(vals, actions, rewards, advantages)
 
+    def refresh(self):
+        self.fig.canvas.start_event_loop(0.000001)
+
     def plot(self, vals, actions, rewards, advantages):
         xlim = [0, len(vals)]
         ylim = self._axis([rewards, vals], buff=0.1)
@@ -324,5 +329,5 @@ class Plotter(object):
         ylim = self._axis([advantages], -1, 1, buff=0.1)
         self._setup(self.ax[2], xlim, ylim)
         self.ax[2].plot(x, advantages)
+        self.refresh()
 
-        plt.pause(0.000001)

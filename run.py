@@ -15,7 +15,7 @@ def main(args):
     env = gym.make(conf["env"])
     train_planner = OnPolicyPlanner(**conf["planner"])
     converter = create_converter(conf["converter"], env.observation_space.shape, args.name)
-    model = create_model(conf["model"], converter.shape[1:], env.action_space.n, train_planner, args.name)
+    model = create_model(conf["model"], converter.shape[1:], env.action_space.n, train_planner, args.name, start_epoch=args.epoch)
     env.close()
     reward_shaper = RewardShaper(**conf["rewardShaper"])
     plotter = None
@@ -60,6 +60,7 @@ if __name__ == '__main__':
     parser.add_argument('-p', '--plot', action="store_true")
     parser.add_argument('-t', '--test', action="store_true")
     parser.add_argument('-m', '--max-action', action="store_true")
+    parser.add_argument('-e', '--epoch', type=int, default=0)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     main(args)
