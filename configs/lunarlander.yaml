@@ -26,3 +26,4 @@ executor:
 agent:
     end_reward: 0
     max_reward: 1000
+    stickiness: 2

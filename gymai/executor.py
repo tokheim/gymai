@@ -1,4 +1,6 @@
 import logging
+from collections import deque
+import random
 
 log = logging.getLogger(__name__)
 
@@ -13,12 +15,13 @@ class TestExecutor(object):
             self.game_callback.update(mems)
 
 class SequentialExecutor(object):
-    def __init__(self, agents, model, train_planner, game_callbacker, samples):
+    def __init__(self, agents, model, train_planner, game_callbacker, samples, rerun_prob=0):
         self.agents = agents
         self.model = model
         self.train_planner = train_planner
         self.game_callback = game_callbacker
         self.samples = samples
+        self.rerun_prob = rerun_prob
 
 
     def run(self):
@@ -27,15 +30,17 @@ class SequentialExecutor(object):
 
     def _run_agents(self):
         for i, agent in enumerate(self.agents):
-            self._run_agent(agent, i==0)
+            self._run_agent(agent, i)
+            if random.random() < self.rerun_prob:
+                self._run_agent(agent, i)
         self.model.train()
 
-    def _run_agent(self, agent, should_callback):
+    def _run_agent(self, agent, agent_num):
         mems = agent.run_frames(self.samples)
-        if should_callback:
+        if agent_num==0:
             self.game_callback.update(mems)
         else:
-            self.game_callback.background_update(mems)
+            self.game_callback.background_update(mems, agent_num)
         self.train_planner.update(mems)
 
 
@@ -47,11 +52,25 @@ class GameCallbacker(object):
         self.runs = 0
         self.frames = 0
         self.running_total_rewards = 0
+        self.agent_run_rewards = {}
+        self.game_averager = Averager(100)
 
-    def background_update(self, memories):
+
+    def background_update(self, memories, agent=0):
         self.frames += len(memories)
-        self.runs += sum(m.done for m in memories)
-        self.running_total_rewards += sum(m.unshaped_reward for m in self.memories)
+        rewards = 0
+        for m in memories:
+            rewards += m.unshaped_reward
+            if m.done:
+                self.runs += 1
+                self.running_total_rewards += rewards
+                rewards += self.agent_run_rewards.get(agent, 0)
+                self.game_averager.add(rewards)
+                self.agent_run_rewards[agent] = 0
+                rewards = 0
+        self.running_total_rewards += rewards
+        self.agent_run_rewards[agent] = rewards + self.agent_run_rewards.get(agent, 0)
+
         if self.plotter is not None:
             self.plotter.refresh()
 
@@ -72,6 +91,19 @@ class GameCallbacker(object):
         if self.plotter is not None:
             self.plotter.plot_mems(self.memories)
         if self.reward_grapher is not None:
-            self.reward_grapher.report_game(self.runs, tot_reward, self.frames, self.running_total_rewards)
+            self.reward_grapher.report_game(self.runs, tot_reward, self.frames, self.running_total_rewards, self.game_averager.average())
         log.info("Run %s frames %s score %s", self.runs, len(self.memories), tot_reward)
 
+class Averager(object):
+    def __init__(self, n=100):
+        self._data = deque(maxlen=n)
+        self._cur = 0.0
+
+    def add(self, val):
+        if len(self._data) >= self._data.maxlen:
+            self._cur -= self._data.popleft()
+        self._data.append(val)
+        self._cur += val
+
+    def average(self):
+        return self._cur / len(self._data)

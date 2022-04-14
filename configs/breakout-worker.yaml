@@ -1,9 +1,10 @@
-#BreakoutDeterministic-v1
+#env: BreakoutNoFrameskip-v4
 env: Breakout-v0
 gamehacks: false
+render_mode: human
 planner:
-    #batch_size: 128
-    batch_size: 32
+    batch_size: 64
+    #batch_size: 32
     min_batches: 8
 converter:
     height: 84
@@ -13,12 +14,14 @@ model:
     type: conv
     act_coef: 1
     vf_coef: 1
-    ent_coef: 0.01
+    #ent_coef: 0.01
+    ent_coef: 0.001
     ppo_clip: 0.1
     lr: 0.0003
     epochs: 3
     expected_value: 0.4
     normalize_advantage: True
+    #normalize_advantage: False
     train_steps: 100000
     end_ppo_clip: 0
     end_lr: 0
@@ -27,7 +30,8 @@ rewardShaper:
     gae_lambda: 0.9
 executor:
     samples: 32
-    workers: 8
+    #workers: 8
+    workers: 16
 agent:
     end_reward: 0
     max_reward: 1

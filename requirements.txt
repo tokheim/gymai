@@ -6,3 +6,5 @@ gym[atari]
 matplotlib
 pyyaml
 opencv-python
+pygame
+autorom[accept-rom-license]

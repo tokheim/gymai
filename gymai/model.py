@@ -98,7 +98,7 @@ class ModelHolder(object):
                 loss_weights=weights)
 
 
-        self._epochs = start_epoch
+        self._epochs = int(start_epoch / epochs) * epochs
         self._epochs_per_run = epochs
         log_dir = "logs/"+self.name
         writer = tensorflow.summary.create_file_writer(log_dir+"/game")
@@ -155,10 +155,16 @@ class ModelHolder(object):
         discounted_rewards = numpy.vstack([m.discounted_reward for m in memories])
         advantages = numpy.vstack([m.advantage for m in memories])
         if self.normalize_adv:
-            advantages = self._normalize(advantages)
+            #advantages = self._normalize(advantages)
+            advantages = self._norm_inplace(advantages)
         actions_taken = numpy.vstack([m.action.onehot for m in memories])
         actions_preds = numpy.vstack([m.action.prediction for m in memories])
         self._train(states, discounted_rewards, advantages, actions_taken, actions_preds)
+
+    def _norm_inplace(self, data):
+        amp = numpy.sqrt(numpy.mean(numpy.square(data)))
+        amp = max(amp, 1e-10)
+        return data / amp
 
     def _normalize(self, data):
         mean = numpy.mean(data)
@@ -233,13 +239,14 @@ class RewardCallback(object):
     def __init__(self, writer):
         self.writer = writer
 
-    def report_game(self, game_num, rewards, frames, total_rewards):
+    def report_game(self, game_num, rewards, frames, total_rewards, avg_rewards):
         if self.writer is None:
             return
         with self.writer.as_default():
             tensorflow.summary.scalar('rewards_total', data=total_rewards, step=game_num)
             tensorflow.summary.scalar('rewards_last', data=rewards, step=game_num)
             tensorflow.summary.scalar('frames_total', data=frames, step=game_num)
+            tensorflow.summary.scalar('rewards_avg', data=avg_rewards, step=game_num)
             self.writer.flush()
 
 class OnPolicyPlanner(object):

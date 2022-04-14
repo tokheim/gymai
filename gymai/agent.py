@@ -8,17 +8,23 @@ import gym
 log = logging.getLogger(__name__)
 
 class AgentBuilder(object):
-    def __init__(self, envname, model, state_conv, reward_shaper, agent_conf):
+    def __init__(self, envname, model, state_conv, reward_shaper, agent_conf, action_converter, render_mode):
         self.envname = envname
         self.model = model
         self.state_conv = state_conv
         self.agent_conf = agent_conf
         self.reward_shaper = reward_shaper
+        self.action_converter = action_converter
+        self.render_mode = render_mode
 
     def build(self, render=False):
         converter = self.state_conv.copy()
-        env = gym.make(self.envname)
-        return A2CAgent(env, self.model, converter, self.reward_shaper, render=render, **self.agent_conf)
+        kwargs = {}
+        if render and self.render_mode is not None:
+            render = False
+            kwargs['render_mode'] = self.render_mode
+        env = gym.make(self.envname, **kwargs)
+        return A2CAgent(env, self.model, converter, self.reward_shaper, render=render, action_converter=self.action_converter, **self.agent_conf)
 
     def build_agents(self, n, render=False):
         agents = []
@@ -29,23 +35,24 @@ class AgentBuilder(object):
 
 
 class A2CAgent:
-    def __init__(self, env, model, state_converter, reward_shaper, end_reward=-1, max_reward=1, render=True, max_action=False, stickiness = 0):
+    def __init__(self, env, model, state_converter, reward_shaper, end_reward=-1, max_reward=1, min_reward=-100, render=True, max_action=False, stickiness = 0, action_converter=None):
         self.env = env
         self.model = model
         self.state_converter = state_converter
-        self.action_space = self.env.action_space.n
         self.max_reward = max_reward
+        self.min_reward = min_reward
         self.reward_shaper = reward_shaper
-        self.runs = 0
         self.end_reward = end_reward
         self._should_render = render
         self._max_action = max_action
         self._action_repeat = stickiness+1
+        self._action_converter = action_converter
         self._last_state = self.state_converter.convert(env.reset())
+        self._frames = 0
 
     def generate_predictions(self, state):
         action_pred, val = self.model.apply(state)
-        action = Action(action_pred)
+        action = Action(action_pred, self._action_converter)
         memory = Memory(state, action, val)
         if self._max_action:
             action.max_action()
@@ -69,18 +76,21 @@ class A2CAgent:
         state = self._last_state
         while not done:
             mem = self.generate_predictions(state)
-            self._render(mem)
+            self._render()
             state, reward, done, info = self._perform_action(mem.action)
             state = self.state_converter.convert(state)
             mem.unshaped_reward = reward
-            mem.reward = min(reward, self.max_reward)
+            mem.reward = max(min(reward, self.max_reward), self.min_reward)
+            done = done or self._frames > 10000
             mem.done = done
             memories.append(mem)
+            self._frames += 1
             if len(memories) > max_frames:
                 break
         end_val = 0
         if done:
             memories[-1].reward += self.end_reward
+            self._frames = 0
             self.reset()
         else:
             self._last_state = state
@@ -101,7 +111,7 @@ class A2CAgent:
                 break
         return state, cum_reward, done, info
 
-    def _render(self, memory):
+    def _render(self):
         if self._should_render:
             self.env.render()
 
@@ -151,13 +161,16 @@ class RewardShaper(object):
         return discounted
 
 class Action(object):
-    def __init__(self, prediction):
+    def __init__(self, prediction, converter=None):
         self.prediction = prediction
         self.random_action()
+        self._converter = converter
 
     @property
     def n(self):
-        return self._action
+        if not self._converter:
+            return self._action
+        return self._converter.convert(self._action)
 
     def max_action(self):
         self._action = numpy.argmax(self.prediction)
@@ -179,6 +192,17 @@ class Action(object):
         ents = self.prediction * numpy.log(numpy.clip(self.prediction, 1e-10, None))
         return - sum(ents) / numpy.log(len(self.prediction))
 
+class ActionSpaceConverter(object):
+    def __init__(self, actions):
+        self._real_actions = actions
+
+    def convert(self, n):
+        return self._real_actions[n]
+
+    @property
+    def action_size(self):
+        return len(self._real_actions)
+
 class Memory(object):
     def __init__(self, state, action, value_prediction, reward=None, discounted_reward=None, advantage=None, done=False):
         self.state = state
@@ -191,21 +215,22 @@ class Memory(object):
         self.unshaped_reward = reward
 
 class ReshapeConverter(object):
-    def __init__(self, original_shape, history_picks):
+    def __init__(self, original_shape, history_picks, scale):
         self.shape = tuple([1, len(history_picks)] + list(original_shape))
         self._state=numpy.zeros(tuple([1, max(history_picks)+1] + list(original_shape)))
         self._hists=history_picks
+        self._scale=scale
 
     def convert(self, state):
         numpy.roll(self._state, 1, axis=1)
-        self._state[0,0,:] = state
+        self._state[0,0,:] = state * self._scale
         return self._state[:,self._hists,:]
 
     def reset(self):
         self._state = numpy.zeros(self._state.shape)
 
     def copy(self):
-        return ReshapeConverter(self.shape[2:], self._hists)
+        return ReshapeConverter(self.shape[2:], self._hists, self._scale)
 
 class ImageConverter(object):
     def __init__(self, dim, history_picks, name="test", colored=False):
@@ -271,17 +296,32 @@ class ImageConverter(object):
         cv2.imwrite(path, img)
         self._sampled += 1
 
-def create_converter(conf, env_shape, name):
+def create_converter(conf, obs_space, name):
     history = conf.get("history", 1)
     skips = conf.get("skip", 0)
     hist_picks = list(range(0, history*(skips+1), skips+1))
+    scale = 1.
+    if conf.get("normalize"):
+        scale = 1.0 / obs_space.high
     if conf.get("type") == "flat":
-        return ReshapeConverter(env_shape, hist_picks)
+        return ReshapeConverter(obs_space.shape, hist_picks, scale)
     colored = conf.get("colored", False)
     hist_picks = ImageConverter.shape_hist_picks(hist_picks, colored)
     return ImageConverter((conf["height"], conf["width"]), hist_picks, colored=colored, name=name)
 
 class Plotter(object):
+    """
+    #box 1
+    green: actual rewards
+    red: predicted rewards
+
+    #box 2
+    blue: entropy
+    black: chosen probability
+
+    #box 3
+    blue: frame advantage
+    """
     def __init__(self, name, reward_shaper):
         plt.ion()
         ax = []

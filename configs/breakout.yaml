@@ -1,6 +1,7 @@
 #BreakoutDeterministic-v1
 env: Breakout-v0
 gamehacks: false
+render_mode: human
 planner:
     #batch_size: 128
     batch_size: 512
